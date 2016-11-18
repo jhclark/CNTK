@@ -13,7 +13,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 namespace Microsoft.MSR.CNTK.Extensibility.Managed.Tests
 {
     [TestClass]
-    public class EvalManagedTest
+    public class EvalManagedTests
     {
         [TestMethod]
         public void EvalManagedEvaluateNoInputTest()
