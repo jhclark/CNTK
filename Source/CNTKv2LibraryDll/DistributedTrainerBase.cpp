@@ -64,11 +64,6 @@ namespace CNTK
                 auto weights = g.first.Value();
                 g.second = MakeSharedObject<NDArrayView>(0, weights->GetDataType(), weights->Shape(), weights->Device());
             }
-
-            // TODO: what if in the future the type is different?
-            auto dataType = gradientValues.front().first.GetDataType();
-            info.evalCriterionValue = MakeSharedObject<NDArrayView>(0, dataType, NDShape{ 1 }, DeviceDescriptor::CPUDevice());
-            info.trainingLossValue = MakeSharedObject<NDArrayView>(0, dataType, NDShape{ 1 }, DeviceDescriptor::CPUDevice());
         }
     }
 }

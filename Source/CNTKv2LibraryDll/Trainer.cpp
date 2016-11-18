@@ -161,6 +161,22 @@ namespace CNTK
     {
         // TODO: We should reconsider the interface
         // Probably passing the flag that the minibatch is the last, and empty arguments in case of empty minibatch.
+
+        bool wasDistributed = m_distributed;
+
+        // when distributed trainer exists, parallelization starts after specified number of samples seen
+        // before that, all workers run locally without aggregation (and minibatch source run locally as well)
+        // NOTE that this relies on determinism on reader for all workers to reach the same state
+        // TODO: pass the model/parameter from worker-0 to other workers when start parallelization
+
+        m_distributed = IsRunningDistributed();
+
+        if (m_distributed && !wasDistributed)
+        {
+            // when switching from not distributed, all workers needs to sync up before starting cooperation
+            m_distributedTrainer->GetCommunicator()->Barrier();
+        }
+
         bool endOfData = arguments.empty();
         bool emptyMinibatch = endOfData || (arguments.begin()->second == nullptr);
         if (emptyMinibatch)
@@ -172,20 +188,8 @@ namespace CNTK
 
         outputs.insert(outputsToFetch.begin(), outputsToFetch.end());
 
-        bool wasDistributed = m_distributed;
-
-        // when distributed trainer exists, parallelization starts after specified number of samples seen
-        // before that, all workers run locally without aggregation (and minibatch source run locally as well)
-        // NOTE that this relies on determinism on reader for all workers to reach the same state
-        // TODO: pass the model/parameter from worker-0 to other workers when start parallelization
-
-        m_distributed = IsRunningDistributed();
-
         if (m_distributed)
         {
-            // when switching from not distributed, all workers needs to sync up before starting cooperation
-            if (!wasDistributed) m_distributedTrainer->GetCommunicator()->Barrier();
-
             m_distributedTrainer->PreMinibatchCallback(*this);
         }
 
@@ -266,7 +270,7 @@ namespace CNTK
 
     bool Trainer::HandleEmptyMinibatch(bool endOfData)
     {
-        if (m_distributedTrainer == nullptr) return false;
+        if (!m_distributed) return false;
 
         m_prevMinibatchNumSamples = 0;
 
@@ -277,12 +281,16 @@ namespace CNTK
         for (const auto& parameter : modelParameters)
             gradients.push_back(std::make_pair(parameter, nullptr));
 
+        // TODO: what if in the future the type is different?
+        auto dataType = gradients.front().first.GetDataType();
+        m_prevMinibatchAggregateTrainingLossValue = MakeSharedObject<Value>(MakeSharedObject<NDArrayView>(0, dataType, NDShape{ 1 }, DeviceDescriptor::CPUDevice()));
+        m_prevMinibatchAggregateEvalCriterionValue = MakeSharedObject<Value>(MakeSharedObject<NDArrayView>(0, dataType, NDShape{ 1 }, DeviceDescriptor::CPUDevice()));
         MinibatchInfo info
         {
             endOfData,
             0,
-            m_prevMinibatchAggregateTrainingLossValue ? m_prevMinibatchAggregateTrainingLossValue->Data() : nullptr,
-            m_prevMinibatchAggregateEvalCriterionValue ? m_prevMinibatchAggregateEvalCriterionValue->Data() : nullptr,
+            m_prevMinibatchAggregateTrainingLossValue->Data(),
+            m_prevMinibatchAggregateEvalCriterionValue->Data(),
         };
 
         bool distributedEndOfData = m_distributedTrainer->PreParameterUpdateCallback(*this, gradients, info);
@@ -385,6 +393,7 @@ namespace CNTK
 
     double Trainer::PreviousMinibatchLossAverage() const
     {
+        if (m_prevMinibatchNumSamples == 0) return 0;
         return (GetScalarValue(m_prevMinibatchAggregateTrainingLossValue) / m_prevMinibatchNumSamples);
     }
 
@@ -393,6 +402,7 @@ namespace CNTK
         if (!m_evaluationFunction)
             InvalidArgument("Trainer::PreviousMinibatchEvaluationAverage: Cannot get evaluation criterion value when no evaluation function was specified during 'this' trainer's construction");
 
+        if (m_prevMinibatchNumSamples == 0) return 0;
         return (GetScalarValue(m_prevMinibatchAggregateEvalCriterionValue) / m_prevMinibatchNumSamples);
     }
 }
