@@ -47,6 +47,8 @@ int main(int argc, char* argv[])
 
     TestFrameMode();
 
+    //TestAccuracy();
+
     printf("\nCNTKv2LibraryDistribution tests: Passed\n");
     fflush(stdout);
 

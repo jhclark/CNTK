@@ -159,13 +159,12 @@ namespace CNTK
 
     bool Trainer::TrainMinibatch(const std::unordered_map<Variable, ValuePtr>& arguments, std::unordered_map<Variable, ValuePtr>& outputsToFetch, const DeviceDescriptor& computeDevice /*= DeviceDescriptor::UseDefaultDevice()*/)
     {
-        {
-            // TODO: We should reconsider the interface
-            // Probably passing the flag that the minibatch is the last, and empty arguments in case of empty minibatch.
-            bool emptyMinibatch = arguments.empty() || (arguments.begin()->second == nullptr);
-            if (emptyMinibatch)
-                return HandleEmptyMinibatch(arguments.empty());
-        }
+        // TODO: We should reconsider the interface
+        // Probably passing the flag that the minibatch is the last, and empty arguments in case of empty minibatch.
+        bool endOfData = arguments.empty();
+        bool emptyMinibatch = endOfData || (arguments.begin()->second == nullptr);
+        if (emptyMinibatch)
+            return HandleEmptyMinibatch(endOfData);
 
         std::unordered_map<Variable, ValuePtr> outputs = { { m_aggregatedLossFunction, nullptr }, { m_trainingSampleCountVar, nullptr } };
         if (m_aggregatedEvaluationFunction)
@@ -226,7 +225,7 @@ namespace CNTK
         for (const auto& parameter : modelParameters)
             gradients.push_back(std::make_pair(parameter, parameterGradients[parameter]->Data()));
 
-        bool endOfData = m_prevMinibatchNumSamples == 0;
+        endOfData = m_prevMinibatchNumSamples == 0;
         if (m_distributed)
         {
             MinibatchInfo info
@@ -265,7 +264,7 @@ namespace CNTK
         return anyUpdatesPerformed;
     }
 
-    bool Trainer::HandleEmptyMinibatch(bool atEndOfData)
+    bool Trainer::HandleEmptyMinibatch(bool endOfData)
     {
         if (m_distributedTrainer == nullptr) return false;
 
@@ -280,19 +279,19 @@ namespace CNTK
 
         MinibatchInfo info
         {
-            atEndOfData,
+            endOfData,
             0,
-            m_prevMinibatchAggregateTrainingLossValue->Data(),
-            m_prevMinibatchAggregateEvalCriterionValue->Data()
+            m_prevMinibatchAggregateTrainingLossValue ? m_prevMinibatchAggregateTrainingLossValue->Data() : nullptr,
+            m_prevMinibatchAggregateEvalCriterionValue ? m_prevMinibatchAggregateEvalCriterionValue->Data() : nullptr,
         };
 
-        bool end = m_distributedTrainer->PreParameterUpdateCallback(*this, gradients, info);
+        bool distributedEndOfData = m_distributedTrainer->PreParameterUpdateCallback(*this, gradients, info);
         m_prevMinibatchNumSamples = info.numberOfSamples;
 
         bool anyUpdatesPerformed = false;
-        if (!m_prevMinibatchNumSamples)
+        if (m_prevMinibatchNumSamples != 0)
             anyUpdatesPerformed = UpdateLearners(std::unordered_map<Parameter, NDArrayViewPtr>(gradients.begin(), gradients.end()));
-        return anyUpdatesPerformed && !end;
+        return anyUpdatesPerformed && !distributedEndOfData;
     }
 
     bool Trainer::IsRunningDistributed() const
